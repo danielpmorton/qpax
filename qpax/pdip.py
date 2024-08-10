@@ -123,7 +123,7 @@ def pdip_pc_step(inputs):
 # 12 pdip_iter
 
 
-def solve_qp(Q, q, A, b, G, h, solver_tol=1e-3):
+def solve_qp(Q, q, A, b, G, h, solver_tol=1e-3, max_iter=30):
     # symmetrize Q
     Q = 0.5 * (Q + Q.T)
 
@@ -134,7 +134,7 @@ def solve_qp(Q, q, A, b, G, h, solver_tol=1e-3):
         converged = inputs[11]
         pdip_iter = inputs[12]
 
-        return jnp.logical_and(pdip_iter < 30, converged == 0)
+        return jnp.logical_and(pdip_iter < max_iter, converged == 0)
 
     converged = 0
     pdip_iter = 0
@@ -204,7 +204,7 @@ def while_loop_debug(cond_fun, body_fun, init_val):
     return val
 
 
-def solve_qp_debug(Q, q, A, b, G, h, solver_tol=1e-3):
+def solve_qp_debug(Q, q, A, b, G, h, solver_tol=1e-3, max_iter=30):
     # symmetrize Q
     Q = 0.5 * (Q + Q.T)
 
@@ -215,7 +215,7 @@ def solve_qp_debug(Q, q, A, b, G, h, solver_tol=1e-3):
         converged = inputs[11]
         pdip_iter = inputs[12]
 
-        return jnp.logical_and(pdip_iter < 30, converged == 0)
+        return jnp.logical_and(pdip_iter < max_iter, converged == 0)
 
     converged = 0
     pdip_iter = 0
