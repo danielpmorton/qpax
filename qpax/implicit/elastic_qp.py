@@ -192,7 +192,7 @@ def solve_qp_elastic(
     sigma: float = 0.125,
     verbose: bool = False,
 ):
-    """Solve an elastic QP using a retraction-manifold primal-dual interior-point method."""
+    """Solve an elastic QP using the retraction-manifold PDIP method."""
     Q = jnp.atleast_2d(Q)
     G = jnp.atleast_2d(G)
     Q = 0.5 * (Q + Q.T)
@@ -219,25 +219,34 @@ def solve_qp_elastic(
         r6 = G @ x - t + s2 - h
 
         kkt_res = jnp.concatenate((r1, r2, r3, r4, r5, r6))
-        converged = jnp.where(
-            jnp.linalg.norm(kkt_res, ord=jnp.inf) < params.tol, 1, 0
-        )
+        converged = jnp.where(jnp.linalg.norm(kkt_res, ord=jnp.inf) < params.tol, 1, 0)
 
         rz1 = z1 - retraction_map(v1, kappa)
         rs1 = s1 - retraction_map(-v1, kappa)
         rz2 = z2 - retraction_map(v2, kappa)
         rs2 = s2 - retraction_map(-v2, kappa)
 
-        B1p, B2p, c1, c2, L_J = factorize_elastic_implicit_kkt(
-            Q, G, v1, v2, kappa
-        )
+        B1p, B2p, c1, c2, L_J = factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa)
 
         kappa_target = sigma * kappa
         rk = kappa - kappa_target
 
         dx, dt, ds1, ds2, dz1, dz2, dv1, dv2, dk = solve_elastic_implicit_kkt_rhs(
-            G, B1p, B2p, c1, c2, L_J,
-            r1, r2, r5, r6, rz1, rs1, rz2, rs2, rk,
+            G,
+            B1p,
+            B2p,
+            c1,
+            c2,
+            L_J,
+            r1,
+            r2,
+            r5,
+            r6,
+            rz1,
+            rs1,
+            rz2,
+            rs2,
+            rk,
         )
 
         alpha = 0.99 * jnp.min(
@@ -368,14 +377,25 @@ def pdip_newton_step_elastic(inputs, verbose: bool = False):
     rz2 = z2 - retraction_map(v2, kappa)
     rs2 = s2 - retraction_map(-v2, kappa)
 
-    B1p, B2p, c1, c2, L_J = factorize_elastic_implicit_kkt(
-        Q, G, v1, v2, kappa
-    )
+    B1p, B2p, c1, c2, L_J = factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa)
 
     rk = kappa - target_kappa
     dx, dt, ds1, ds2, dz1, dz2, dv1, dv2, dk = solve_elastic_implicit_kkt_rhs(
-        G, B1p, B2p, c1, c2, L_J,
-        r1, r2, r5, r6, rz1, rs1, rz2, rs2, rk,
+        G,
+        B1p,
+        B2p,
+        c1,
+        c2,
+        L_J,
+        r1,
+        r2,
+        r5,
+        r6,
+        rz1,
+        rs1,
+        rz2,
+        rs2,
+        rk,
     )
 
     alpha = 0.99 * jnp.min(
