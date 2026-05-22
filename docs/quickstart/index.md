@@ -13,3 +13,5 @@ you need:
   parallel with `jax.vmap`.
 - **[Batched differentiating](batched-differentiate.md)** — gradients
   through a whole batch at once.
+- **[Solve an elastic QP](elastic.md)** — relax inequality constraints
+  with penalized slacks so infeasible problems still return an answer.
