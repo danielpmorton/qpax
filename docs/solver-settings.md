@@ -11,6 +11,7 @@ These are the settings of the `qpax` solver:
 | `linear_solver` | `CHOLESKY` | e       | Factorization for the reduced KKT system (`CHOLESKY` or `QR`). Implicit backend always uses LU.          |
 | `sigma`         | `0.125`                 | i       | Centering parameter $\sigma$ targeting the next duality gap. Accepted in `e` for API uniformity but unused (explicit uses Mehrotra centering). |
 | `target_kappa`  | `1e-3`        | e, i    | Relaxation parameter $\kappa$ for the perturbed complementarity condition $s \cdot z = \kappa$. Used only by `relax_qp` and `solve_qp_primal`. |
+| `penalty`       | —                       | e, i — *elastic only* | Per-unit cost $\rho$ on the elastic slack $t$. See the [elastic formulation](./algorithm/elastic.md). |
 
 \* For further details on boths backends, see the [algorithmic description](./algorithm/forward_backward.md) of the forward and backward pass.
 

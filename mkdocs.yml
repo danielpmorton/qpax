@@ -89,7 +89,7 @@ nav:
   - Algorithm:
       - algorithm/index.md
       - Forward and Backward: algorithm/forward_backward.md
-      - Elastic: algorithm/elastic.md
+      - Elastic Mode: algorithm/elastic.md
   - API reference:
       - api/index.md
       - Core API: api/core.md
