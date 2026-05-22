@@ -84,6 +84,7 @@ nav:
       - Differentiate a QP: quickstart/differentiate.md
       - Batched solving: quickstart/batched-solve.md
       - Batched differentiating: quickstart/batched-differentiate.md
+      - Solve an elastic QP: quickstart/elastic.md
   - Solver settings: solver-settings.md
   - Algorithm:
       - algorithm/index.md

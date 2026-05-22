@@ -3,7 +3,7 @@
 The elastic relaxation adds non-negative slacks `t` to every inequality and
 penalizes them in the cost, so the solver still returns a sensible answer
 when the original constraints are infeasible. Reach for this recipe when
-you cannot guarantee `G x \le h` is satisfiable.
+you cannot guarantee `G x <= h` is satisfiable.
 
 ## The problem
 
