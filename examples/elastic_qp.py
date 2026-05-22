@@ -17,6 +17,9 @@ import numpy as np
 import qpax
 
 USE_F64 = False
+BACKEND = "i"  # "e" for explicit, "i" for implicit
+VERBOSE = True
+
 if USE_F64:
     jax.config.update("jax_enable_x64", True)
 
@@ -43,7 +46,9 @@ def generate_infeasible_qp(n, dtype):
 Q, q, G, h = generate_infeasible_qp(n=3, dtype=dtype)
 penalty = 10.0
 
-x, t, _, _, _, _, converged, iters = qpax.solve_qp_elastic(Q, q, G, h, penalty)
+x, t, _, _, _, _, converged, iters = qpax.solve_qp_elastic(
+    Q, q, G, h, penalty, backend=BACKEND, verbose=VERBOSE
+)
 
 print("converged:", int(converged))
 print("iterations:", int(iters))

@@ -20,7 +20,7 @@ def solve_qp_elastic(
     h: jax.Array,
     penalty: float,
     *,
-    backend: str = "e",
+    backend: str = "i",
     **kwargs: Any,
 ):
     """Solve the elastic QP relaxation of an inequality-constrained QP.
@@ -49,7 +49,7 @@ def solve_qp_elastic_primal(
     h: jax.Array,
     penalty: float,
     *,
-    backend: str = "e",
+    backend: str = "i",
     **kwargs: Any,
 ) -> jax.Array:
     """Differentiable elastic-QP solve returning only the primal ``x``.

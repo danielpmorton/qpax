@@ -5,6 +5,7 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
+from qpax._verbose import print_footer, print_header
 from qpax.explicit.pdip import (
     LinearSolver,
     SolverParams,
@@ -13,8 +14,6 @@ from qpax.explicit.pdip import (
     centering_params,
     ort_linesearch,
 )
-
-DEBUG_FLAG = False
 
 
 class ElasticQPData(NamedTuple):
@@ -147,7 +146,9 @@ def solve_elastic_kkt_cc(
     return dx, dt, ds1, ds2, dz1, dz2
 
 
-def solve_qp_elastic(Q, q, G, h, penalty, solver_tol=1e-3, max_iter=30):
+def solve_qp_elastic(
+    Q, q, G, h, penalty, solver_tol=1e-3, max_iter=30, verbose: bool = False
+):
     Q = 0.5 * (Q + Q.T)
 
     params = SolverParams(tol=solver_tol, max_iter=max_iter)
@@ -216,17 +217,16 @@ def solve_qp_elastic(Q, q, G, h, penalty, solver_tol=1e-3, max_iter=30):
             jnp.where(take, z2 + alpha * dz2, z2),
         )
 
-        if DEBUG_FLAG:
-            nr1 = jnp.linalg.norm(r1, ord=jnp.inf)
-            nr2 = jnp.linalg.norm(r2, ord=jnp.inf)
-            nr3 = jnp.linalg.norm(r3, ord=jnp.inf)
-            nr4 = jnp.linalg.norm(r4, ord=jnp.inf)
-            nr5 = jnp.linalg.norm(r5, ord=jnp.inf)
-            nr6 = jnp.linalg.norm(r6, ord=jnp.inf)
+        if verbose:
+            rt = jnp.concatenate((r1, r2))
+            ri = jnp.concatenate((r5, r6))
             print(
-                f"{pdip_iter:3d}   {nr1:9.2e}   {nr2:9.2e}"
-                f"  {nr3:9.2e}  {nr4:9.2e}   {nr5:9.2e}"
-                f"  {nr6:9.2e}   {alpha:6.4f}"
+                f"{pdip_iter:3d}   "
+                f"{jnp.linalg.norm(rt, ord=jnp.inf):9.2e}   "
+                f"{jnp.linalg.norm(r3, ord=jnp.inf):9.2e}  "
+                f"{jnp.linalg.norm(r4, ord=jnp.inf):9.2e}  "
+                f"{jnp.linalg.norm(ri, ord=jnp.inf):9.2e}   "
+                f"{alpha:6.4f}"
             )
 
         return (qp, new_state, converged, pdip_iter + 1)
@@ -237,12 +237,18 @@ def solve_qp_elastic(Q, q, G, h, penalty, solver_tol=1e-3, max_iter=30):
 
     init = (qp, state, 0, 0)
 
-    if DEBUG_FLAG:
-        print(
-            "iter      r1          r2         r3         r4        r5        r6"
-            "        alpha"
+    if verbose:
+        print_header(
+            n=Q.shape[0],
+            m=0,
+            p=G.shape[0],
+            tol=solver_tol,
+            max_iter=max_iter,
+            precision="f32" if Q.dtype == jnp.float32 else "f64",
+            backend="explicit",
         )
-        print("-" * 80)
+        print("iter      rt          rc1        rc2         ri        alpha")
+        print("-" * 70)
         val = init
         while _cond(val):
             val = _step(val)
@@ -252,6 +258,10 @@ def solve_qp_elastic(Q, q, G, h, penalty, solver_tol=1e-3, max_iter=30):
 
     _, final_state, converged, pdip_iter = outputs
     x, t, s1, s2, z1, z2 = final_state
+
+    if verbose:
+        cost = 0.5 * x @ Q @ x + q @ x + penalty * jnp.sum(t)
+        print_footer(converged, cost, pdip_iter)
 
     return x, t, s1, s2, z1, z2, converged, pdip_iter
 
@@ -271,6 +281,7 @@ def relax_qp_elastic(
     solver_tol=1e-3,
     target_kappa=1e-3,
     max_iter=30,
+    verbose: bool = False,
 ):
     params = SolverParams(tol=solver_tol, max_iter=max_iter)
     qp = ElasticQPData(Q, q, G, h, penalty)
@@ -326,17 +337,16 @@ def relax_qp_elastic(
             jnp.where(take, z2 + alpha * dz2, z2),
         )
 
-        if DEBUG_FLAG:
-            nr1 = jnp.linalg.norm(r1, ord=jnp.inf)
-            nr2 = jnp.linalg.norm(r2, ord=jnp.inf)
-            nr3 = jnp.linalg.norm(r3, ord=jnp.inf)
-            nr4 = jnp.linalg.norm(r4, ord=jnp.inf)
-            nr5 = jnp.linalg.norm(r5, ord=jnp.inf)
-            nr6 = jnp.linalg.norm(r6, ord=jnp.inf)
+        if verbose:
+            rt = jnp.concatenate((r1, r2))
+            ri = jnp.concatenate((r5, r6))
             print(
-                f"{pdip_iter:3d}   {nr1:9.2e}   {nr2:9.2e}"
-                f"  {nr3:9.2e}  {nr4:9.2e}   {nr5:9.2e}"
-                f"  {nr6:9.2e}   {alpha:6.4f}"
+                f"{pdip_iter:3d}   "
+                f"{jnp.linalg.norm(rt, ord=jnp.inf):9.2e}   "
+                f"{jnp.linalg.norm(r3, ord=jnp.inf):9.2e}  "
+                f"{jnp.linalg.norm(r4, ord=jnp.inf):9.2e}  "
+                f"{jnp.linalg.norm(ri, ord=jnp.inf):9.2e}   "
+                f"{alpha:6.4f}"
             )
 
         return (qp, new_state, converged, pdip_iter + 1)
@@ -347,12 +357,18 @@ def relax_qp_elastic(
 
     init = (qp, state, 0, 0)
 
-    if DEBUG_FLAG:
-        print(
-            "iter      r1          r2         r3         r4        r5        r6"
-            "        alpha"
+    if verbose:
+        print_header(
+            n=Q.shape[0],
+            m=0,
+            p=G.shape[0],
+            tol=solver_tol,
+            max_iter=max_iter,
+            precision="f32" if Q.dtype == jnp.float32 else "f64",
+            backend="explicit",
         )
-        print("-" * 80)
+        print("iter      rt          rc1        rc2         ri        alpha")
+        print("-" * 70)
         val = init
         while _cond(val):
             val = _step(val)
@@ -362,6 +378,10 @@ def relax_qp_elastic(
 
     _, final_state, converged, pdip_iter = outputs
     x_rlx, t_rlx, s1_rlx, s2_rlx, z1_rlx, z2_rlx = final_state
+
+    if verbose:
+        cost = 0.5 * x_rlx @ Q @ x_rlx + q @ x_rlx + penalty * jnp.sum(t_rlx)
+        print_footer(converged, cost, pdip_iter)
 
     return x_rlx, t_rlx, s1_rlx, s2_rlx, z1_rlx, z2_rlx, converged, pdip_iter
 

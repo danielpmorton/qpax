@@ -252,12 +252,14 @@ def solve_qp_elastic(
         )
 
         if verbose:
+            rt = jnp.concatenate((r1, r2))
+            ri = jnp.concatenate((r5, r6))
             print(
                 f"{pdip_iter:3d}   {kappa:9.2e}   "
-                f"{jnp.linalg.norm(r1, ord=jnp.inf):9.2e}   "
-                f"{jnp.linalg.norm(r2, ord=jnp.inf):9.2e}  "
-                f"{jnp.linalg.norm(jnp.concatenate((r3, r4)), ord=jnp.inf):9.2e}  "
-                f"{jnp.linalg.norm(jnp.concatenate((r5, r6)), ord=jnp.inf):9.2e}    "
+                f"{jnp.linalg.norm(rt, ord=jnp.inf):9.2e}   "
+                f"{jnp.linalg.norm(r3, ord=jnp.inf):9.2e}  "
+                f"{jnp.linalg.norm(r4, ord=jnp.inf):9.2e}  "
+                f"{jnp.linalg.norm(ri, ord=jnp.inf):9.2e}    "
                 f"{alpha:6.4f}   {sigma:9.4f}"
             )
 
@@ -294,7 +296,7 @@ def solve_qp_elastic(
             sigma=sigma,
         )
         print(
-            "iter     κ            r1          r2         rc         rg           α          σ"  # noqa: E501
+            "iter     κ            rt          rc1        rc2         ri           α          σ"  # noqa: E501
         )
         print(
             "----------------------------------------------------------------------------------------"
@@ -388,12 +390,14 @@ def pdip_newton_step_elastic(inputs, verbose: bool = False):
     )
 
     if verbose:
+        rt = jnp.concatenate((r1, r2))
+        ri = jnp.concatenate((r5, r6))
         print(
             f"{pdip_iter:3d}   {kappa:9.2e}   "
-            f"{jnp.linalg.norm(r1, ord=jnp.inf):9.2e}   "
-            f"{jnp.linalg.norm(r2, ord=jnp.inf):9.2e}   "
-            f"{jnp.linalg.norm(jnp.concatenate((r3, r4)), ord=jnp.inf):9.2e}   "
-            f"{jnp.linalg.norm(jnp.concatenate((r5, r6)), ord=jnp.inf):9.2e}   "
+            f"{jnp.linalg.norm(rt, ord=jnp.inf):9.2e}   "
+            f"{jnp.linalg.norm(r3, ord=jnp.inf):9.2e}   "
+            f"{jnp.linalg.norm(r4, ord=jnp.inf):9.2e}   "
+            f"{jnp.linalg.norm(ri, ord=jnp.inf):9.2e}   "
             f"{alpha:6.4f}   {target_kappa:9.2e}"
         )
 
@@ -499,7 +503,7 @@ def relax_qp_elastic(
             sigma=sigma,
         )
         print(
-            "iter      κ          r1          r2         rc         rg"
+            "iter      κ          rt          rc1        rc2         ri"
             "         alpha      target"
         )
         print(
