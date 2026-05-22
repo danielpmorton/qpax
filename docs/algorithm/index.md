@@ -1,12 +1,10 @@
 # Algorithm
 
-`qpax` is a primal–dual interior-point (PDIP) solver. This section sketches
-the shared structure and then walks through the *explicit* and *implicit*
-variants of the three main routines:
+`qpax` is a primal–dual interior-point (PDIP) solver. This section walks
+through the algorithms behind the solve and its derivatives:
 
-- **[Core algorithm](core.md)** — the principles shared by both backends.
-- **[Explicit algorithm](explicit.md)** — predictor–corrector PDIP from
-  `cvxgen` (`backend="e"`), the default.
-- **[Implicit algorithm](implicit.md)** — retraction-manifold PDIP
-  (`backend="i"`), an alternative that updates slack/dual variables via a
-  positive-cone retraction.
+- **[Forward and Backward](forward_backward.md)** — the PDIP problem
+  statement, the forward pass (*Solve QP* and *Relax QP*), and the backward
+  pass (*Computing gradients*). Use the tabs on the page to switch between
+  the explicit (`backend="e"`) and implicit (`backend="i"`) variants.
+- **[Elastic](elastic.md)** — the elastic-QP relaxation. *Coming soon.*

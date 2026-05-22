@@ -85,11 +85,10 @@ nav:
       - Batched solving: quickstart/batched-solve.md
       - Batched differentiating: quickstart/batched-differentiate.md
   - Solver settings: solver-settings.md
-  # - Algorithm:
-  #     - algorithm/index.md
-  #     - Core algorithm: algorithm/core.md
-  #     - Explicit algorithm: algorithm/explicit.md
-  #     - Implicit algorithm: algorithm/implicit.md
+  - Algorithm:
+      - algorithm/index.md
+      - Forward and Backward: algorithm/forward_backward.md
+      - Elastic: algorithm/elastic.md
   - API reference:
       - api/index.md
       - Core API: api/core.md
