@@ -23,7 +23,7 @@ def solve_qp_primal(
     G: jax.Array,
     h: jax.Array,
     *,
-    backend: str = "i",
+    backend: str = "e",
     **kwargs: Any,
 ) -> jax.Array:
     """Solve a QP and return the primal solution ``x``.

@@ -4,7 +4,7 @@ These are the settings of the `qpax` solver:
 
 | Argument        | Default                 | Backend | Description                                                                                              |
 | --------------- | ----------------------- | ------- | -------------------------------------------------------------------------------------------------------- |
-| `backend`       | `"i"`        | —       | Selects the explicit (`"e"`) or implicit retraction-manifold (`"i"`) complementarity backend \*.            |
+| `backend`       | `"e"`        | —       | Selects the explicit (`"e"`) or implicit retraction-manifold (`"i"`) complementarity backend \*.            |
 | `solver_tol`    | `1e-5`                  | e, i    | Stopping tolerance on the $L_\infty$ norm of the KKT residual.                                           |
 | `max_iter`      | `30`                    | e, i    | Maximum number of iterations when solving the QP.                                                                             |
 | `verbose`       | `False`                 | e, i    | If `True`, prints per-iteration residual, step size, and centering info.                                 |

@@ -23,7 +23,7 @@ def solve_qp(
     G: jax.Array,
     h: jax.Array,
     *,
-    backend: str = "i",
+    backend: str = "e",
     **kwargs: Any,
 ) -> tuple:
     """Solve a convex QP via primal-dual interior point.
