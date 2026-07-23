@@ -39,6 +39,16 @@ class ElasticQPState(NamedTuple):
     z2: jax.Array
 
 
+class FoldedElasticKKT(NamedTuple):
+    """Factorization and diagonal terms for the folded elastic KKT solve."""
+
+    B1n: jax.Array
+    B2n: jax.Array
+    denominator: jax.Array
+    lu: jax.Array
+    piv: jax.Array
+
+
 # ------------------------------ initialization ------------------------------ #
 
 
@@ -47,7 +57,7 @@ def solve_init_elastic_ls(qp: ElasticQPData, solver: LinearSolver):
     Q, q, G, h, penalty = qp
     ns = len(h)
     r1 = -q
-    r2 = penalty * jnp.ones(ns)
+    r2 = penalty * jnp.ones(ns, dtype=Q.dtype)
     r4 = h
 
     L_H = _factor_init(Q + 0.5 * G.T @ G, solver)
@@ -91,14 +101,15 @@ def initialize_elastic(
 
 
 def factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa):
-    """Factorize the reduced 4-block implicit elastic KKT system with LU.
+    """Factorize the primal Schur complement of the elastic KKT system.
 
-    Builds and factors
-        [ Q - GᵀG   Gᵀ    0       Gᵀ    ]
-        [ G        -2I   -I      -I     ]
-        [ 0        -I    -B1⁻     0     ]
-        [ G        -I     0      -B2⁻   ]
-    where B_k⁻ = diag(b_κ'(-v_k)).
+    The ``(dt, dv1, dv2)`` equations are independent for every constraint.
+    Eliminating those variables leaves the ``len(q)`` square system
+
+        H = Q + G.T @ diag(B1p * B2p / d) @ G,
+
+    where ``d = B1p * B2n + B2p * B1n``. This avoids factoring the
+    ``len(q) + 3 * len(h)`` square block used by the unreduced formulation.
     """
     B1n_vec = derivative_retraction_map(-v1, kappa)
     B2n_vec = derivative_retraction_map(-v2, kappa)
@@ -107,25 +118,17 @@ def factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa):
     c1_vec = derivative_retraction_map_kappa(v1, kappa)
     c2_vec = derivative_retraction_map_kappa(v2, kappa)
 
-    nx = G.shape[1]
-    nz = G.shape[0]
-    Iz = jnp.eye(nz, dtype=Q.dtype)
-    Zz = jnp.zeros((nz, nz), dtype=Q.dtype)
-    Zxz = jnp.zeros((nx, nz), dtype=Q.dtype)
-    Zzx = jnp.zeros((nz, nx), dtype=Q.dtype)
-
-    GtG = jnp.matmul(G.T, G, precision=jax.lax.Precision.HIGHEST)
-    J = jnp.block(
-        [
-            [Q - GtG, G.T, Zxz, G.T],
-            [G, -2.0 * Iz, -Iz, -Iz],
-            [Zzx, -Iz, -jnp.diag(B1n_vec), Zz],
-            [G, -Iz, Zz, -jnp.diag(B2n_vec)],
-        ]
+    denominator = B1p_vec * B2n_vec + B2p_vec * B1n_vec
+    schur_diagonal = B1p_vec * B2p_vec / denominator
+    H = Q + jnp.matmul(
+        G.T,
+        schur_diagonal[:, None] * G,
+        precision=jax.lax.Precision.HIGHEST,
     )
-    L_J = jsp.linalg.lu_factor(J)
+    lu, piv = jsp.linalg.lu_factor(H)
+    factor = FoldedElasticKKT(B1n_vec, B2n_vec, denominator, lu, piv)
 
-    return B1p_vec, B2p_vec, c1_vec, c2_vec, L_J
+    return B1p_vec, B2p_vec, c1_vec, c2_vec, factor
 
 
 def solve_elastic_implicit_kkt_rhs(
@@ -134,7 +137,7 @@ def solve_elastic_implicit_kkt_rhs(
     B2p_vec,
     c1_vec,
     c2_vec,
-    L_J,
+    factor,
     rx,
     rt,
     rg1,
@@ -145,31 +148,33 @@ def solve_elastic_implicit_kkt_rhs(
     rs2,
     rk,
 ):
-    """Solve the implicit elastic KKT system given a pre-computed LU factorization."""
-    nx = G.shape[1]
-    nz = G.shape[0]
+    """Solve a folded implicit elastic KKT system and back-substitute."""
+    B1n_vec, B2n_vec, denominator, lu, piv = factor
 
-    a1 = rg1 + rz1 - rs1
-    a2 = rg2 + rz2 - rs2
+    # Right-hand sides for the two primal constraints and t stationarity.
+    R3 = -rg1 + rs1 + c1_vec * rk
+    R4 = -rg2 + rs2 + c2_vec * rk
+    St = rt + rz1 + rz2 + (c1_vec + c2_vec) * rk
 
-    rhs = jnp.concatenate(
-        [
-            rx - G.T @ a2,
-            rt + a1 + a2,
-            rg1 - rs1 - c1_vec * rk,
-            rg2 - rs2 - c2_vec * rk,
-        ]
-    )
-    sol = jsp.linalg.lu_solve(L_J, -rhs)
+    # The part of B2p * dv2 that is independent of G @ dx.
+    dz2_offset = (B2p_vec / denominator) * (B1n_vec * St + B1p_vec * (R3 - R4))
+    rhs = -rx + G.T @ (rz2 + c2_vec * rk - dz2_offset)
+    dx = jsp.linalg.lu_solve((lu, piv), rhs)
 
-    dx = sol[:nx]
-    dt = sol[nx : nx + nz]
-    dv1 = sol[nx + nz : nx + 2 * nz]
-    dv2 = sol[nx + 2 * nz :]
+    Gdx = G @ dx
+    dt = (
+        B2p_vec * B1n_vec * Gdx
+        - B1n_vec * B2n_vec * St
+        - B1p_vec * B2n_vec * R3
+        - B2p_vec * B1n_vec * R4
+    ) / denominator
+    common = Gdx + R3 - R4
+    dv1 = (B2n_vec * St - B2p_vec * common) / denominator
+    dv2 = (B1n_vec * St + B1p_vec * common) / denominator
 
     dk = -rk
     ds1 = -rg1 + dt
-    ds2 = -rg2 - G @ dx + dt
+    ds2 = -rg2 - Gdx + dt
     dz1 = -rz1 + B1p_vec * dv1 - c1_vec * rk
     dz2 = -rz2 + B2p_vec * dv2 - c2_vec * rk
 
@@ -212,7 +217,7 @@ def solve_qp_elastic(
         kappa = jnp.maximum((jnp.dot(s1, z1) + jnp.dot(s2, z2)) / (2 * m), 1e-14)
 
         r1 = Q @ x + q + G.T @ z2
-        r2 = -z1 - z2 + penalty * jnp.ones(m)
+        r2 = -z1 - z2 + penalty * jnp.ones(m, dtype=Q.dtype)
         r3 = s1 * z1
         r4 = s2 * z2
         r5 = -t + s1
@@ -226,7 +231,7 @@ def solve_qp_elastic(
         rz2 = z2 - retraction_map(v2, kappa)
         rs2 = s2 - retraction_map(-v2, kappa)
 
-        B1p, B2p, c1, c2, L_J = factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa)
+        B1p, B2p, c1, c2, factor = factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa)
 
         kappa_target = sigma * kappa
         rk = kappa - kappa_target
@@ -237,7 +242,7 @@ def solve_qp_elastic(
             B2p,
             c1,
             c2,
-            L_J,
+            factor,
             r1,
             r2,
             r5,
@@ -353,8 +358,7 @@ def pdip_newton_step_elastic(inputs, verbose: bool = False):
         _B2p_prev,
         _c1_prev,
         _c2_prev,
-        _lu_prev,
-        _piv_prev,
+        _factor_prev,
     ) = inputs
 
     m = len(h)
@@ -363,7 +367,7 @@ def pdip_newton_step_elastic(inputs, verbose: bool = False):
     kappa = jnp.maximum((jnp.dot(s1, z1) + jnp.dot(s2, z2)) / (2 * m), 1e-14)
 
     r1 = Q @ x + q + G.T @ z2
-    r2 = -z1 - z2 + penalty * jnp.ones(m)
+    r2 = -z1 - z2 + penalty * jnp.ones(m, dtype=Q.dtype)
     r3 = s1 * z1 - target_kappa
     r4 = s2 * z2 - target_kappa
     r5 = -t + s1
@@ -377,7 +381,7 @@ def pdip_newton_step_elastic(inputs, verbose: bool = False):
     rz2 = z2 - retraction_map(v2, kappa)
     rs2 = s2 - retraction_map(-v2, kappa)
 
-    B1p, B2p, c1, c2, L_J = factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa)
+    B1p, B2p, c1, c2, factor = factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa)
 
     rk = kappa - target_kappa
     dx, dt, ds1, ds2, dz1, dz2, dv1, dv2, dk = solve_elastic_implicit_kkt_rhs(
@@ -386,7 +390,7 @@ def pdip_newton_step_elastic(inputs, verbose: bool = False):
         B2p,
         c1,
         c2,
-        L_J,
+        factor,
         r1,
         r2,
         r5,
@@ -454,8 +458,7 @@ def pdip_newton_step_elastic(inputs, verbose: bool = False):
         B2p,
         c1,
         c2,
-        L_J[0],
-        L_J[1],
+        factor,
     )
 
 
@@ -478,6 +481,8 @@ def relax_qp_elastic(
     verbose: bool = False,
 ):
     """Relaxed elastic solve that also returns the last Newton-step factorization."""
+    solver_tol = jnp.asarray(solver_tol, dtype=Q.dtype)
+    target_kappa = jnp.asarray(target_kappa, dtype=Q.dtype)
 
     def relaxed_continuation_criteria(inputs):
         converged = inputs[12]
@@ -485,7 +490,14 @@ def relax_qp_elastic(
         return jnp.logical_and(pdip_iter < max_iter, converged == 0)
 
     nz = G.shape[0]
-    dim = G.shape[1] + 3 * nz
+    nx = G.shape[1]
+    empty_factor = FoldedElasticKKT(
+        jnp.zeros(nz, dtype=Q.dtype),
+        jnp.zeros(nz, dtype=Q.dtype),
+        jnp.ones(nz, dtype=Q.dtype),
+        jnp.zeros((nx, nx), dtype=Q.dtype),
+        jnp.zeros(nx, dtype=jnp.int32),
+    )
 
     init_inputs = (
         Q,
@@ -507,8 +519,7 @@ def relax_qp_elastic(
         jnp.zeros(nz, dtype=Q.dtype),
         jnp.zeros(nz, dtype=Q.dtype),
         jnp.zeros(nz, dtype=Q.dtype),
-        jnp.zeros((dim, dim), dtype=Q.dtype),
-        jnp.zeros(dim, dtype=jnp.int32),
+        empty_factor,
     )
 
     if verbose:
@@ -541,7 +552,7 @@ def relax_qp_elastic(
     converged = outputs[12]
     pdip_iter = outputs[13]
     B1p, B2p, c1, c2 = outputs[15:19]
-    L_J = outputs[19], outputs[20]
+    L_J = outputs[19]
 
     if verbose:
         cost = 0.5 * x_rlx @ Q @ x_rlx + q @ x_rlx + penalty * jnp.sum(t_rlx)
