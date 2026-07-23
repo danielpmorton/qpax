@@ -1,8 +1,7 @@
 """Top-level elastic-QP dispatcher.
 
 Routes ``solve_qp_elastic`` and ``solve_qp_elastic_primal`` to either the
-explicit (``backend="e"``) or implicit (``backend="i"``) backend. The
-implicit backend currently raises ``NotImplementedError``.
+explicit (``backend="e"``) or implicit (``backend="i"``) backend.
 """
 
 from typing import Any
@@ -31,8 +30,8 @@ def solve_qp_elastic(
         G: ``(p, n)`` inequality constraint matrix.
         h: ``(p,)`` inequality constraint RHS.
         penalty: per-unit cost of slack on each inequality.
-        backend: only ``"e"`` is supported; ``"i"`` raises ``NotImplementedError``.
-        **kwargs: forwarded to the explicit backend (e.g. ``solver_tol``,
+        backend: ``"e"`` for explicit PDIP or ``"i"`` for implicit PDIP.
+        **kwargs: forwarded to the selected backend (e.g. ``solver_tol`` and
             ``max_iter``).
     """
     if backend == "e":
@@ -60,8 +59,8 @@ def solve_qp_elastic_primal(
         G: ``(p, n)`` inequality constraint matrix.
         h: ``(p,)`` inequality constraint RHS.
         penalty: per-unit cost of slack on each inequality.
-        backend: only ``"e"`` is supported; ``"i"`` raises ``NotImplementedError``.
-        **kwargs: forwarded to the explicit backend.
+        backend: ``"e"`` for explicit PDIP or ``"i"`` for implicit PDIP.
+        **kwargs: forwarded to the selected backend.
     """
     if backend == "e":
         return _explicit.solve_qp_elastic_primal(Q, q, G, h, penalty, **kwargs)

@@ -177,17 +177,26 @@ recovers the slack and dual directions by back-substitution.
         c1  ← ∂_κ b_κ(v1)
         c2  ← ∂_κ b_κ(v2)
 
-        # RHS aggregates
-        a1 ← rg1 + rz1 - rs1
-        a2 ← rg2 + rz2 - rs2
+        # Each constraint has an independent 3-by-3 block in
+        # (Δt_i, Δv1_i, Δv2_i), so eliminate those blocks.
+        u1 ← -rg1 + rs1 + c1 ⊙ rκ
+        u2 ← -rg2 + rs2 + c2 ⊙ rκ
+        ut ← rt + rz1 + rz2 + (c1 + c2) ⊙ rκ
+        d  ← B1⁺ B2⁻ + B2⁺ B1⁻
+        w  ← diag(B1⁺ B2⁺) ⊘ diag(d)
+        o2 ← B2⁺ d⁻¹ (B1⁻ ut + B1⁺ (u1 - u2))
 
-        # Reduced KKT system in (Δx, Δt, Δv1, Δv2)
-        ┌ Q - GᵀG   Gᵀ    0     Gᵀ  ┐ ┌ Δx  ┐   ┌ -rx + Gᵀ a2        ┐
-        │ G        -2I   -I    -I   │ │ Δt  │ = │ -rt - a1 - a2      │
-        │ 0        -I   -B1⁻   0    │ │ Δv1 │   │ -rg1 + rs1 + c1 rκ │
-        └ G        -I    0    -B2⁻  ┘ └ Δv2 ┘   └ -rg2 + rs2 + c2 rκ ┘
+        # Factor and solve an n-by-n primal system.
+        H   ← Q + Gᵀ diag(w) G
+        L_H ← factor(H)
+        Δx  ← solve(L_H, -rx + Gᵀ (rz2 + c2 ⊙ rκ - o2))
 
-        Solve the reduced system for (Δx, Δt, Δv1, Δv2)
+        # Elementwise back-substitution
+        y   ← G Δx
+        Δt  ← (B2⁺ B1⁻ y - B1⁻ B2⁻ ut
+               - B1⁺ B2⁻ u1 - B2⁺ B1⁻ u2) ⊘ d
+        Δv1 ← (B2⁻ ut - B2⁺ (y + u1 - u2)) ⊘ d
+        Δv2 ← (B1⁻ ut + B1⁺ (y + u1 - u2)) ⊘ d
 
         # Back-substitution
         Δκ  ← -rκ

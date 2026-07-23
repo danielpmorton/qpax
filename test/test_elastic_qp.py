@@ -1,10 +1,15 @@
-"""Tests for the elastic QP backend dispatch."""
+"""Tests for the elastic QP backends."""
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import qpax
+from qpax.implicit.elastic_qp import (
+    factorize_elastic_implicit_kkt,
+    solve_elastic_implicit_kkt_rhs,
+)
 
 
 @pytest.mark.parametrize("backend", ["e", "i"])
@@ -42,3 +47,138 @@ def test_elastic_preserves_state_on_terminal_iteration(backend):
 
     for full_value, capped_value in zip(full[:6], capped[:6], strict=True):
         np.testing.assert_array_equal(np.asarray(full_value), np.asarray(capped_value))
+
+
+def test_implicit_elastic_folded_kkt_matches_dense_system():
+    """The n-by-n Schur solve must match the former (n + 3p)-block solve."""
+    n, p = 5, 17
+    keys = iter(jax.random.split(jax.random.PRNGKey(11), 13))
+
+    R = jax.random.normal(next(keys), (n, n))
+    Q = R.T @ R + jnp.eye(n)
+    G = jax.random.normal(next(keys), (p, n))
+    v1 = jax.random.normal(next(keys), (p,))
+    v2 = jax.random.normal(next(keys), (p,))
+    kappa = jnp.float32(0.2)
+    residuals = (
+        jax.random.normal(next(keys), (n,)),
+        *(jax.random.normal(next(keys), (p,)) for _ in range(7)),
+        jnp.float32(0.07),
+    )
+
+    B1p, B2p, c1, c2, factor = factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa)
+    folded = solve_elastic_implicit_kkt_rhs(G, B1p, B2p, c1, c2, factor, *residuals)
+
+    rx, rt, rg1, rg2, rz1, rs1, rz2, rs2, rk = residuals
+    a1 = rg1 + rz1 - rs1
+    a2 = rg2 + rz2 - rs2
+    zeros_pp = jnp.zeros((p, p), dtype=Q.dtype)
+    zeros_np = jnp.zeros((n, p), dtype=Q.dtype)
+    zeros_pn = jnp.zeros((p, n), dtype=Q.dtype)
+    eye_p = jnp.eye(p, dtype=Q.dtype)
+    dense_kkt = jnp.block(
+        [
+            [Q - G.T @ G, G.T, zeros_np, G.T],
+            [G, -2.0 * eye_p, -eye_p, -eye_p],
+            [zeros_pn, -eye_p, -jnp.diag(factor.B1n), zeros_pp],
+            [G, -eye_p, zeros_pp, -jnp.diag(factor.B2n)],
+        ]
+    )
+    dense_rhs = jnp.concatenate(
+        [
+            rx - G.T @ a2,
+            rt + a1 + a2,
+            rg1 - rs1 - c1 * rk,
+            rg2 - rs2 - c2 * rk,
+        ]
+    )
+    dense_solution = jnp.linalg.solve(dense_kkt, -dense_rhs)
+    dx = dense_solution[:n]
+    dt = dense_solution[n : n + p]
+    dv1 = dense_solution[n + p : n + 2 * p]
+    dv2 = dense_solution[n + 2 * p :]
+    dense = (
+        dx,
+        dt,
+        -rg1 + dt,
+        -rg2 - G @ dx + dt,
+        -rz1 + B1p * dv1 - c1 * rk,
+        -rz2 + B2p * dv2 - c2 * rk,
+        dv1,
+        dv2,
+        -rk,
+    )
+
+    assert factor.lu.shape == (n, n)
+    assert dense_kkt.shape == (n + 3 * p, n + 3 * p)
+    for folded_value, dense_value in zip(folded, dense, strict=True):
+        np.testing.assert_allclose(folded_value, dense_value, rtol=1e-3, atol=1e-3)
+
+
+def _known_solution_elastic_qp(n, p):
+    keys = jax.random.split(jax.random.PRNGKey(1000 + p), 4)
+    R = jax.random.normal(keys[0], (n, n), dtype=jnp.float32)
+    Q = R.T @ R / n + jnp.eye(n, dtype=jnp.float32)
+    x = 0.2 * jax.random.normal(keys[1], (n,), dtype=jnp.float32)
+    G = jax.random.normal(keys[2], (p, n), dtype=jnp.float32) / jnp.sqrt(n)
+    magnitude = 0.25 + 0.5 * jax.random.uniform(keys[3], (p,), dtype=jnp.float32)
+    violated = jnp.arange(p) % 2 == 0
+    t = jnp.where(violated, magnitude, 0.0)
+    s2 = jnp.where(violated, 0.0, magnitude)
+    penalty = jnp.float32(1.0)
+    z2 = jnp.where(violated, penalty, 0.0)
+    h = G @ x - t + s2
+    q = -Q @ x - G.T @ z2
+    return Q, q, G, h, penalty, x
+
+
+@pytest.mark.parametrize("n_constraints", [1, 50, 500])
+def test_implicit_elastic_f32_constraint_scaling_accuracy(n_constraints):
+    Q, q, G, h, penalty, expected_x = _known_solution_elastic_qp(35, n_constraints)
+    x, t, s1, s2, z1, z2, converged, _ = qpax.solve_qp_elastic(
+        Q,
+        q,
+        G,
+        h,
+        penalty,
+        backend="i",
+        solver_tol=1e-3,
+        max_iter=50,
+    )
+
+    residual = jnp.concatenate(
+        (
+            Q @ x + q + G.T @ z2,
+            -z1 - z2 + penalty,
+            s1 * z1,
+            s2 * z2,
+            -t + s1,
+            G @ x - t + s2 - h,
+        )
+    )
+    assert int(converged) == 1
+    assert float(jnp.linalg.norm(residual, ord=jnp.inf)) < 1e-3
+    np.testing.assert_allclose(x, expected_x, rtol=5e-3, atol=3e-3)
+
+
+def test_implicit_elastic_folded_factor_supports_backward_pass():
+    Q, q, G, h, penalty, _ = _known_solution_elastic_qp(5, 10)
+
+    def loss(q_value):
+        x = qpax.solve_qp_elastic_primal(
+            Q,
+            q_value,
+            G,
+            h,
+            penalty,
+            backend="i",
+            solver_tol=1e-3,
+            target_kappa=1e-3,
+            max_iter=50,
+        )
+        return jnp.sum(x * x)
+
+    gradient = jax.jit(jax.grad(loss))(q)
+    assert gradient.shape == q.shape
+    assert gradient.dtype == q.dtype
+    assert bool(jnp.all(jnp.isfinite(gradient)))
