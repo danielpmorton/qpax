@@ -40,13 +40,20 @@ class ElasticQPState(NamedTuple):
 
 
 class FoldedElasticKKT(NamedTuple):
-    """Factorization and diagonal terms for the folded elastic KKT solve."""
+    """Factorization and diagonal terms for the folded elastic KKT solve.
+
+    ``chol`` is the upper Cholesky factor of the primal Schur complement
+    ``H = Q + Gᵀ diag(B1p * B2p / d) G``. ``H`` is symmetric positive definite
+    whenever ``Q`` is (the ``Gᵀ diag(w) G`` term is PSD because ``w > 0``), so a
+    Cholesky factorization is well defined and ~2x cheaper than the LU it
+    replaces — consistent with the ``LinearSolver.CHOLESKY`` default used
+    elsewhere in the backend.
+    """
 
     B1n: jax.Array
     B2n: jax.Array
     denominator: jax.Array
-    lu: jax.Array
-    piv: jax.Array
+    chol: jax.Array
 
 
 # ------------------------------ initialization ------------------------------ #
@@ -125,8 +132,9 @@ def factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa):
         schur_diagonal[:, None] * G,
         precision=jax.lax.Precision.HIGHEST,
     )
-    lu, piv = jsp.linalg.lu_factor(H)
-    factor = FoldedElasticKKT(B1n_vec, B2n_vec, denominator, lu, piv)
+    # H is SPD by construction; Cholesky is exact-shape and ~2x cheaper than LU.
+    chol, _ = jsp.linalg.cho_factor(H, lower=False)
+    factor = FoldedElasticKKT(B1n_vec, B2n_vec, denominator, chol)
 
     return B1p_vec, B2p_vec, c1_vec, c2_vec, factor
 
@@ -149,7 +157,7 @@ def solve_elastic_implicit_kkt_rhs(
     rk,
 ):
     """Solve a folded implicit elastic KKT system and back-substitute."""
-    B1n_vec, B2n_vec, denominator, lu, piv = factor
+    B1n_vec, B2n_vec, denominator, chol = factor
 
     # Right-hand sides for the two primal constraints and t stationarity.
     R3 = -rg1 + rs1 + c1_vec * rk
@@ -159,7 +167,7 @@ def solve_elastic_implicit_kkt_rhs(
     # The part of B2p * dv2 that is independent of G @ dx.
     dz2_offset = (B2p_vec / denominator) * (B1n_vec * St + B1p_vec * (R3 - R4))
     rhs = -rx + G.T @ (rz2 + c2_vec * rk - dz2_offset)
-    dx = jsp.linalg.lu_solve((lu, piv), rhs)
+    dx = jsp.linalg.cho_solve((chol, False), rhs)
 
     Gdx = G @ dx
     dt = (
@@ -491,12 +499,12 @@ def relax_qp_elastic(
 
     nz = G.shape[0]
     nx = G.shape[1]
+    # Placeholder factor for the while_loop carry; overwritten on iteration 0.
     empty_factor = FoldedElasticKKT(
         jnp.zeros(nz, dtype=Q.dtype),
         jnp.zeros(nz, dtype=Q.dtype),
         jnp.ones(nz, dtype=Q.dtype),
         jnp.zeros((nx, nx), dtype=Q.dtype),
-        jnp.zeros(nx, dtype=jnp.int32),
     )
 
     init_inputs = (

@@ -49,26 +49,13 @@ def test_elastic_preserves_state_on_terminal_iteration(backend):
         np.testing.assert_array_equal(np.asarray(full_value), np.asarray(capped_value))
 
 
-def test_implicit_elastic_folded_kkt_matches_dense_system():
-    """The n-by-n Schur solve must match the former (n + 3p)-block solve."""
-    n, p = 5, 17
-    keys = iter(jax.random.split(jax.random.PRNGKey(11), 13))
+def _dense_elastic_reference(Q, G, B1p, B2p, c1, c2, factor, residuals):
+    """Solve the unreduced (n + 3p) elastic KKT block directly.
 
-    R = jax.random.normal(next(keys), (n, n))
-    Q = R.T @ R + jnp.eye(n)
-    G = jax.random.normal(next(keys), (p, n))
-    v1 = jax.random.normal(next(keys), (p,))
-    v2 = jax.random.normal(next(keys), (p,))
-    kappa = jnp.float32(0.2)
-    residuals = (
-        jax.random.normal(next(keys), (n,)),
-        *(jax.random.normal(next(keys), (p,)) for _ in range(7)),
-        jnp.float32(0.07),
-    )
-
-    B1p, B2p, c1, c2, factor = factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa)
-    folded = solve_elastic_implicit_kkt_rhs(G, B1p, B2p, c1, c2, factor, *residuals)
-
+    Mirrors the block system the folded Schur solve replaces, so the folded
+    directions can be checked against it.
+    """
+    n, p = G.shape[1], G.shape[0]
     rx, rt, rg1, rg2, rz1, rs1, rz2, rs2, rk = residuals
     a1 = rg1 + rz1 - rs1
     a2 = rg2 + rz2 - rs2
@@ -108,11 +95,132 @@ def test_implicit_elastic_folded_kkt_matches_dense_system():
         dv2,
         -rk,
     )
+    return dense, dense_kkt
 
-    assert factor.lu.shape == (n, n)
+
+def test_implicit_elastic_folded_kkt_matches_dense_system():
+    """The n-by-n Schur solve must match the former (n + 3p)-block solve."""
+    n, p = 5, 17
+    keys = iter(jax.random.split(jax.random.PRNGKey(11), 13))
+
+    R = jax.random.normal(next(keys), (n, n))
+    Q = R.T @ R + jnp.eye(n)
+    G = jax.random.normal(next(keys), (p, n))
+    v1 = jax.random.normal(next(keys), (p,))
+    v2 = jax.random.normal(next(keys), (p,))
+    kappa = jnp.float32(0.2)
+    residuals = (
+        jax.random.normal(next(keys), (n,)),
+        *(jax.random.normal(next(keys), (p,)) for _ in range(7)),
+        jnp.float32(0.07),
+    )
+
+    B1p, B2p, c1, c2, factor = factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa)
+    folded = solve_elastic_implicit_kkt_rhs(G, B1p, B2p, c1, c2, factor, *residuals)
+    dense, dense_kkt = _dense_elastic_reference(
+        Q, G, B1p, B2p, c1, c2, factor, residuals
+    )
+
+    assert factor.chol.shape == (n, n)
     assert dense_kkt.shape == (n + 3 * p, n + 3 * p)
     for folded_value, dense_value in zip(folded, dense, strict=True):
         np.testing.assert_allclose(folded_value, dense_value, rtol=1e-3, atol=1e-3)
+
+
+def test_implicit_elastic_folded_cholesky_handles_psd_q():
+    """Cholesky must stay finite when Q is PSD (rank-deficient), not just PD.
+
+    ``H = Q + Gᵀ diag(w) G`` is still SPD here because the full-column-rank ``G``
+    makes the second term positive definite over ``Q``'s nullspace, but the
+    ``+I`` cushion of the other tests is removed. This is the case that would
+    expose a fragile factorization: ``cho_factor`` returns ``nan`` rather than
+    raising on a non-PD input, so a silent loss of definiteness would surface
+    here as non-finite directions.
+    """
+    n, p, rank = 6, 30, 3
+    keys = iter(jax.random.split(jax.random.PRNGKey(5), 13))
+
+    # Rank-deficient PSD Q: R is (n, rank), so Q has n - rank zero eigenvalues.
+    R = jax.random.normal(next(keys), (n, rank), dtype=jnp.float32)
+    Q = R @ R.T
+    smallest_eig = float(jnp.linalg.eigvalsh(Q).min())
+    assert smallest_eig < 1e-4  # Q really is (numerically) singular, not PD
+
+    G = jax.random.normal(next(keys), (p, n), dtype=jnp.float32)  # full column rank
+    v1 = jax.random.normal(next(keys), (p,), dtype=jnp.float32)
+    v2 = jax.random.normal(next(keys), (p,), dtype=jnp.float32)
+    kappa = jnp.float32(0.2)
+    residuals = (
+        jax.random.normal(next(keys), (n,), dtype=jnp.float32),
+        *(jax.random.normal(next(keys), (p,), dtype=jnp.float32) for _ in range(7)),
+        jnp.float32(0.07),
+    )
+
+    B1p, B2p, c1, c2, factor = factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa)
+    folded = solve_elastic_implicit_kkt_rhs(G, B1p, B2p, c1, c2, factor, *residuals)
+
+    # Cholesky did not silently produce nan/inf on the PSD (non-PD) system.
+    assert bool(jnp.all(jnp.isfinite(factor.chol)))
+    for value in folded:
+        assert bool(jnp.all(jnp.isfinite(value)))
+
+    # And the folded directions still match the dense reference.
+    dense, _ = _dense_elastic_reference(Q, G, B1p, B2p, c1, c2, factor, residuals)
+    for folded_value, dense_value in zip(folded, dense, strict=True):
+        np.testing.assert_allclose(folded_value, dense_value, rtol=1e-3, atol=1e-3)
+
+
+def test_implicit_elastic_psd_q_solves_end_to_end():
+    """A full f32 solve + backward pass must survive a rank-deficient PSD Q.
+
+    Exercises the while-loop carry and implicit-diff path (not just the isolated
+    factorization) when the Cholesky factor is built from a singular Q. The
+    primal solution is not asserted against a target: a rank-deficient Q leaves
+    a flat direction, so only the KKT residual is a meaningful accuracy check.
+    """
+    n, p, rank = 8, 40, 3
+    keys = jax.random.split(jax.random.PRNGKey(3), 4)
+    R = jax.random.normal(keys[0], (n, rank), dtype=jnp.float32)
+    Q = R @ R.T  # PSD, rank 3 -> 5 zero eigenvalues
+    assert float(jnp.linalg.eigvalsh(Q).min()) < 1e-4
+
+    G = jax.random.normal(keys[1], (p, n), dtype=jnp.float32)  # full column rank
+    x_star = 0.2 * jax.random.normal(keys[2], (n,), dtype=jnp.float32)
+    magnitude = 0.25 + 0.5 * jax.random.uniform(keys[3], (p,), dtype=jnp.float32)
+    violated = jnp.arange(p) % 2 == 0
+    t = jnp.where(violated, magnitude, 0.0)
+    s2 = jnp.where(violated, 0.0, magnitude)
+    penalty = jnp.float32(1.0)
+    z2 = jnp.where(violated, penalty, 0.0)
+    h = G @ x_star - t + s2
+    q = -Q @ x_star - G.T @ z2
+
+    x, tt, s1, s2o, z1, z2o, converged, _ = qpax.solve_qp_elastic(
+        Q, q, G, h, penalty, backend="i", solver_tol=1e-4, max_iter=60
+    )
+    residual = jnp.concatenate(
+        (
+            Q @ x + q + G.T @ z2o,
+            -z1 - z2o + penalty,
+            s1 * z1,
+            s2o * z2o,
+            -tt + s1,
+            G @ x - tt + s2o - h,
+        )
+    )
+    assert int(converged) == 1
+    assert bool(jnp.all(jnp.isfinite(x)))
+    assert float(jnp.linalg.norm(residual, ord=jnp.inf)) < 1e-3
+
+    def loss(q_value):
+        x_primal = qpax.solve_qp_elastic_primal(
+            Q, q_value, G, h, penalty, backend="i",
+            solver_tol=1e-4, target_kappa=1e-3, max_iter=60,
+        )
+        return jnp.sum(x_primal * x_primal)
+
+    gradient = jax.jit(jax.grad(loss))(q)
+    assert bool(jnp.all(jnp.isfinite(gradient)))
 
 
 def _known_solution_elastic_qp(n, p):
