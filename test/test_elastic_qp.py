@@ -214,8 +214,15 @@ def test_implicit_elastic_psd_q_solves_end_to_end():
 
     def loss(q_value):
         x_primal = qpax.solve_qp_elastic_primal(
-            Q, q_value, G, h, penalty, backend="i",
-            solver_tol=1e-4, target_kappa=1e-3, max_iter=60,
+            Q,
+            q_value,
+            G,
+            h,
+            penalty,
+            backend="i",
+            solver_tol=1e-4,
+            target_kappa=1e-3,
+            max_iter=60,
         )
         return jnp.sum(x_primal * x_primal)
 
