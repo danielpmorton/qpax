@@ -222,7 +222,13 @@ def solve_qp_elastic(
         m = len(h)
         v1 = z1 - s1
         v2 = z2 - s2
-        kappa = jnp.maximum((jnp.dot(s1, z1) + jnp.dot(s2, z2)) / (2 * m), 1e-14)
+
+        # Floor kappa similar to the handling in the explicit backend
+        # to prevent nans under Cholesky float32
+        eps = jnp.finfo(Q.dtype).eps
+        # Rough order-of-magnitude clamping for the floor
+        kappa_floor = jnp.clip(0.05 * params.tol, 10 * eps, jnp.sqrt(eps))
+        kappa = jnp.maximum((jnp.dot(s1, z1) + jnp.dot(s2, z2)) / (2 * m), kappa_floor)
 
         r1 = Q @ x + q + G.T @ z2
         r2 = -z1 - z2 + penalty * jnp.ones(m, dtype=Q.dtype)
@@ -241,7 +247,8 @@ def solve_qp_elastic(
 
         B1p, B2p, c1, c2, factor = factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa)
 
-        kappa_target = sigma * kappa
+        # Floor the target as well to prevent undershoot
+        kappa_target = jnp.maximum(sigma * kappa, kappa_floor)
         rk = kappa - kappa_target
 
         dx, dt, ds1, ds2, dz1, dz2, dv1, dv2, dk = solve_elastic_implicit_kkt_rhs(
@@ -297,6 +304,23 @@ def solve_qp_elastic(
         s1_new = jnp.where(take, retraction_map(-v1_new, kappa_new), s1)
         z2_new = jnp.where(take, retraction_map(v2_new, kappa_new), z2)
         s2_new = jnp.where(take, retraction_map(-v2_new, kappa_new), s2)
+
+        # Similar non-finite guard to explicit backend --
+        # don't let possible blowups or nans enter the state
+        step_finite = jnp.all(
+            jnp.stack(
+                [
+                    jnp.all(jnp.isfinite(a))
+                    for a in (x_new, t_new, s1_new, s2_new, z1_new, z2_new)
+                ]
+            )
+        )
+        x_new = jnp.where(step_finite, x_new, x)
+        t_new = jnp.where(step_finite, t_new, t)
+        s1_new = jnp.where(step_finite, s1_new, s1)
+        s2_new = jnp.where(step_finite, s2_new, s2)
+        z1_new = jnp.where(step_finite, z1_new, z1)
+        z2_new = jnp.where(step_finite, z2_new, z2)
 
         new_state = ElasticQPState(x_new, t_new, s1_new, s2_new, z1_new, z2_new)
         return (qp, new_state, converged, pdip_iter + 1)
@@ -372,7 +396,10 @@ def pdip_newton_step_elastic(inputs, verbose: bool = False):
     m = len(h)
     v1 = z1 - s1
     v2 = z2 - s2
-    kappa = jnp.maximum((jnp.dot(s1, z1) + jnp.dot(s2, z2)) / (2 * m), 1e-14)
+
+    # Similar flooring strategy as in solve_qp_elastic but without scaling with tol
+    kappa_floor = jnp.maximum(jnp.sqrt(jnp.finfo(Q.dtype).eps), 1e-14)
+    kappa = jnp.maximum((jnp.dot(s1, z1) + jnp.dot(s2, z2)) / (2 * m), kappa_floor)
 
     r1 = Q @ x + q + G.T @ z2
     r2 = -z1 - z2 + penalty * jnp.ones(m, dtype=Q.dtype)
