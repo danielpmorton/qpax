@@ -30,3 +30,19 @@ Releases prior to `0.1.2` are documented in the
 - Batching bug. (John Zhang)
 
 [0.1.2]: https://github.com/qpax-solver/qpax/releases/tag/v0.1.2
+
+## [0.1.4] - 2026-07-24
+
+### Added
+
+- Implicit backend (`backend="i"`) for the elastic QP solvers
+  `solve_qp_elastic` and `solve_qp_elastic_primal`, which previously raised
+  `NotImplementedError`. (Daniel Morton, Jon Arrizabalaga)
+
+### Changed
+
+- The implicit elastic solver now folds the per-constraint blocks into an
+  `n`-by-`n` primal Schur complement solved with Cholesky, replacing the dense
+  `(n + 3p)` LU factorization â better single-precision conditioning and speed.
+
+[0.1.4]: https://github.com/qpax-solver/qpax/releases/tag/v0.1.4
