@@ -132,8 +132,17 @@ def factorize_elastic_implicit_kkt(Q, G, v1, v2, kappa):
         schur_diagonal[:, None] * G,
         precision=jax.lax.Precision.HIGHEST,
     )
-    # H is SPD by construction; Cholesky is exact-shape and ~2x cheaper than LU.
+    # H is SPD but float32 cholesky can still fail (likely, due to rounding
+    # errors leading to taking a sqrt of a negative pivot)
+    # So, at the expense of one more factorization, use the unmodified
+    # factorization if nan-free, otherwise use a regularized version
     chol, _ = jsp.linalg.cho_factor(H, lower=False)
+    n = H.shape[0]
+    delta = 10 * n * jnp.finfo(H.dtype).eps * jnp.max(jnp.diagonal(H))
+    chol_shifted, _ = jsp.linalg.cho_factor(
+        H + delta * jnp.eye(n, dtype=H.dtype), lower=False
+    )
+    chol = jnp.where(jnp.all(jnp.isfinite(chol)), chol, chol_shifted)
     factor = FoldedElasticKKT(B1n_vec, B2n_vec, denominator, chol)
 
     return B1p_vec, B2p_vec, c1_vec, c2_vec, factor
