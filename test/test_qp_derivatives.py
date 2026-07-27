@@ -62,8 +62,9 @@ def test_derivs(backend):
 
         assert jnp.linalg.norm(derivs[i] - fd_deriv) < (0.2 * jnp.linalg.norm(fd_deriv))
 
+
 @pytest.mark.parametrize("backend", ["e", "i"])
-def test_explicit_inequality_matrix_derivative(backend):
+def test_inequality_parameter_derivatives(backend):
     rng = np.random.default_rng(0)
     nx, ns = 4, 6
 
@@ -79,14 +80,14 @@ def test_explicit_inequality_matrix_derivative(backend):
     A = jnp.zeros((0, nx))
     b = jnp.zeros(0)
 
-    def loss(G_):
+    def loss(G_, h_):
         x = solve_qp_primal(
             Q,
             q,
             A,
             b,
             G_,
-            h,
+            h_,
             backend=backend,
             # note: tolerances assume x64
             solver_tol=1e-10,
@@ -94,15 +95,24 @@ def test_explicit_inequality_matrix_derivative(backend):
         )
         return 0.5 * jnp.sum(x**2)
 
-    grad_ad = jax.grad(loss)(G)
+    grad_G_ad, grad_h_ad = jax.grad(loss, argnums=(0, 1))(G, h)
 
     eps = 1e-6
     directions = jnp.eye(G.size).reshape((-1, *G.shape))
-    grad_fd = jax.vmap(
+    grad_G_fd = jax.vmap(
         lambda direction: (
-            loss(G + eps * direction) - loss(G - eps * direction)
+            loss(G + eps * direction, h) - loss(G - eps * direction, h)
         )
         / (2 * eps)
     )(directions).reshape(G.shape)
 
-    np.testing.assert_allclose(grad_ad, grad_fd, rtol=1e-5, atol=1e-6)
+    directions = jnp.eye(h.size)
+    grad_h_fd = jax.vmap(
+        lambda direction: (
+            loss(G, h + eps * direction) - loss(G, h - eps * direction)
+        )
+        / (2 * eps)
+    )(directions)
+
+    np.testing.assert_allclose(grad_G_ad, grad_G_fd, rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(grad_h_ad, grad_h_fd, rtol=1e-5, atol=1e-6)
