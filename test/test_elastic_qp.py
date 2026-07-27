@@ -11,6 +11,8 @@ from qpax.implicit.elastic_qp import (
     solve_elastic_implicit_kkt_rhs,
 )
 
+jax.config.update("jax_enable_x64", True)
+
 
 @pytest.mark.parametrize("backend", ["e", "i"])
 def test_elastic_smoke(backend):
@@ -25,6 +27,50 @@ def test_elastic_smoke(backend):
     assert x.shape == (2,)
     assert jnp.all(jnp.isfinite(x))
     assert int(out[-2]) == 1
+
+@pytest.mark.parametrize("backend", ["e", "i"])
+def test_elastic_inequality_matrix_derivative(backend):
+    rng = np.random.default_rng(0)
+    nx, ns = 4, 6
+
+    factor = rng.standard_normal((nx, nx))
+    Q = jnp.array(factor @ factor.T + np.eye(nx))
+    q = jnp.array(rng.standard_normal(nx))
+    G = rng.standard_normal((ns, nx))
+    x0 = rng.standard_normal(nx)
+    h = jnp.array(
+        G @ x0 + np.array([0.0, 0.5, -0.1, 1.0, 0.3, -0.2])
+    )
+    G = jnp.array(G)
+    penalty = jnp.array(20.0)
+
+    def loss(G_):
+        x = qpax.solve_qp_elastic_primal(
+            Q,
+            q,
+            G_,
+            h,
+            penalty,
+            backend=backend,
+            # note: tolerances assume x64
+            solver_tol=1e-10,
+            target_kappa=1e-8,
+            max_iter=50,
+        )
+        return 0.5 * jnp.sum(x**2)
+
+    grad_ad = jax.grad(loss)(G)
+
+    eps = 1e-6
+    directions = jnp.eye(G.size).reshape((-1, *G.shape))
+    grad_fd = jax.vmap(
+        lambda direction: (
+            loss(G + eps * direction) - loss(G - eps * direction)
+        )
+        / (2 * eps)
+    )(directions).reshape(G.shape)
+
+    np.testing.assert_allclose(grad_ad, grad_fd, rtol=1e-5, atol=1e-6)
 
 
 @pytest.mark.parametrize("backend", ["e", "i"])
